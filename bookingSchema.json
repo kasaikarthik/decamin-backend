@@ -1,8 +1,10 @@
 {
     "userEmail" : "VARCHAR(20)" ,
     "driverEmail" : "VARCHAR(20)",
-    "from" : "double[2]",
-    "to" : "double[2]",
+    "from_lat" : "DOUBLE",
+    "from_lon" : "DOUBLE",
+    "to_lat" : "DOUBLE",
+    "to_lon" : "DOUBLE", 
     "noOfSeats" : "INTEGER", 
     "timeStamp" : "VARCHAR(15)",
     "status" : "INTEGER",
