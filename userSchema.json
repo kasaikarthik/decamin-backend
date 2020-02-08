@@ -1,0 +1,7 @@
+{
+    "email" : "VARCHAR(20)",
+    "password" : "VARCHAR(20)",
+    "gender" : "CHAR",
+    "due" : "INTEGER",
+    "name" : "VARCHAR(15)"
+}

@@ -1,0 +1,10 @@
+{
+    "userEmail" : "VARCHAR(20)" ,
+    "driverEmail" : "VARCHAR(20)",
+    "from" : "double[2]",
+    "to" : "double[2]",
+    "noOfSeats" : "INTEGER", 
+    "timeStamp" : "VARCHAR(15)",
+    "status" : "INTEGER",
+    "id" : "INTEGER"
+}

@@ -1,0 +1,9 @@
+{
+    "email" : "VARCHAR(20)",
+    "password" : "VARCHAR(20)",
+    "gender" : "CHAR",
+    "name" : "VARCHAR(15)",
+    "currentCar" : "INTEGER",
+    "isActive" : "BOOLEAN",
+    "noOfPassengers" : "INTEGER"
+}
