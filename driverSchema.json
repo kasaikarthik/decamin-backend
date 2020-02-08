@@ -5,5 +5,7 @@
     "name" : "VARCHAR(15)",
     "currentCar" : "INTEGER",
     "isActive" : "BOOLEAN",
-    "noOfPassengers" : "INTEGER"
+    "noOfPassengers" : "INTEGER",
+    "position_lat" : "double",
+    "position_lon" : "double"
 }
