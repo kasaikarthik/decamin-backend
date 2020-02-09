@@ -1,5 +1,6 @@
 const express = require("express");
 const mysql = require("mysql");
+const util = require("util");
 
 const auth = require("./auth.json");
 const userSchema = require("./userSchema.json");
@@ -7,16 +8,48 @@ const bookingSchema = require("./bookingSchema.json");
 const driverSchema = require("./driverSchema.json");
 
 const status = {
-    booked: 0,
-    inProgress: 1,
-    complete: 2
+    unavailable: 0,
+    booked: 1,
+    inProgress: 2,
+    completed: 3,
+    cancelled: 4
 };
 
+const sqlConnection = mysql.createConnection(auth);
+const sqlQuery = util.promisify(sqlConnection.query).bind(sqlConnection);
+ 
 var app = new express();
 app.use(express.urlencoded({extended: true}));
 app.use(express.json());
 
-const sqlConnection = mysql.createConnection(auth);
+app.use( async (req,res,next) => {
+    console.log(req.body);
+    var token = req.body.token; 
+    if (token == undefined) {
+        req.verified = false;
+    }
+    else {
+        req.token = token;
+        delete req.body.token;
+
+        try {
+            let result = await sqlQuery("SELECT * FROM auth_tokens where token = " + token + ";");
+            //console.log(result);
+            if (result.length > 0) {
+                req.verified = true;
+                let query = "SELECT 12*60*60 - CURRENT_TIMESTAMP + timeGenerated as timeLeft,email FROM auth_tokens WHERE token = " + req.token + ";";
+                result = await sqlQuery(query);
+                req.timeLeft = result[0].timeLeft;
+                req.email = result[0].email;
+            }
+        }
+        catch (e) {
+            console.error(e);
+            res.status(500).send("Internal server error");
+        } 
+    }
+    next();
+});
 
 function createTableSafely(schema, tableName) {
     var query = "CREATE TABLE IF NOT EXISTS " + tableName + " (";
@@ -56,28 +89,29 @@ function generateToken(data, res) {
 }
 
 function clearExpiredTokens() {
-    console.log("Removing outdated tokens");
     var query = "DELETE FROM auth_tokens WHERE timeGenerated < CURRENT_TIMESTAMP - INTERVAL 12 hour;";
     sqlConnection.query(query);
 }
 
 setInterval(clearExpiredTokens, 10000);
 
-function authenticate(email, pass,res) {
-    var query = `SELECT * FROM user_data as u,driver_data as d WHERE (u.email="${email}" and u.password="${pass}") OR (d.email="${email}" AND d.password="${pass}");`;
-    sqlConnection.query(query, (error, result) => {
-        if (error) {
-            console.log(error);
-            res.status(500).send("Internal server error");
+async function authenticate(email, pass,res) {
+    try {
+        var result = await sqlQuery(`SELECT email FROM user_data WHERE email = "${email}" AND password = "${pass}";`);
+        if (result.length > 0) {
+            generateToken(result[0], res);
+            return;
         }
-        else {
-            if (result.length > 0) {
-                    generateToken(result[0], res);
-                }
-            else 
-                res.send(false);
+        var result = await sqlQuery(`SELECT email FROM driver_data WHERE email = "${email}" AND password = "${pass}";`);
+        if (result.length > 0) {
+            generateToken(result[0], res);
+            return;
         }
-    });
+    }
+    catch (e) {
+        console.error(e);
+        res.status(500).send();
+    }
 }
 
 function insertRecord(tableName, data, cb) {
@@ -101,25 +135,13 @@ function insertRecord(tableName, data, cb) {
     });
 }
 
-function verifyToken(token, cb) {
-    var query = "SELECT * FROM auth_tokens WHERE token = " + token + ";";
-    sqlConnection.query(query, (error, result) => {
-        if (error) {
-            cb(error, null);
-        }
-        else {
-            cb(null, result.length > 0);
-        }
-    });
-}
-
 function getEmailFromToken(token, cb) {
     var query = `SELECT email FROM auth_tokens WHERE token = ${token};`;
     sqlConnection.query(query, cb);
 }
 
 app.post("/driver/getPassengers", (req,res)=>{
-    var query = `SELECT * FROM booking_data WHERE status <> ${status.complete} and driverEmail=${getEmailFromToken(req.token)};`;
+    var query = `SELECT * FROM booking_data WHERE driverEmail="${req.email}";`;
     sqlConnection.query(query, (error, result)=>{
         if (error) {
             console.error(error);
@@ -129,39 +151,6 @@ app.post("/driver/getPassengers", (req,res)=>{
             res.send(result);
         }
     });
-});
-
-app.use("/", (req,res,next) => {
-    var token = req.body.token; 
-    if (!token) {
-        req.verified = false;
-        next();
-    }
-    else {
-        verifyToken(token, (error, result) => {
-            if (error) {
-                console.error("From /:");
-                console.error(error);
-                res.status(500).send("Internal server error");
-            }
-            else {
-                req.verified = result;
-                var query = "SELECT 1800 - CURRENT_TIMESTAMP + timeGenerated as timeLeft FROM auth_tokens WHERE token = " + req.body.token + ";";
-                sqlConnection.query(query, (error, result) => {
-                    if (error) {
-                        console.error(error);
-                        res.status(500).send("Internal error occured!");
-                    }
-                    else {
-                        req.token = req.body.token;
-                        delete req.body.token;
-                        req.timeLeft = result[0];
-                        next();
-                    }
-                });
-            }
-        }); 
-    }
 });
 
 app.post("/getAllDrivers", (req,res)=>{
@@ -185,11 +174,11 @@ app.post("/driver/updatePosition", (req,res)=>{
     if (req.verified) {
         var query = `UPDATE driver_data SET `;
         Object.keys(req.body).forEach((v, i, a) => {
-            query += `${v} = ${req.body[i]}`;
+            query += `${v} = "${req.body[v]}"`;
             if (i < a.length - 1) query += ", ";
         });
 
-        query += ` WHERE email=${req.body.email};`;
+        query += ` WHERE email="${req.email}";`;
         
         sqlConnection.query(query, (error, result)=> {
             if (error) {
@@ -205,25 +194,75 @@ app.post("/driver/updatePosition", (req,res)=>{
     }
 });
 
-app.post("/login", (req,res) => {
-    console.log(req.body);
+app.post("/login", async (req,res) => {
     try {
-            (authenticate(req.body.email,req.body.password, res));
+        await authenticate(req.body.email,req.body.password, res);
     } catch (e) {
-        console.log(e);
+        console.error(e);
         res.status(500).send("Internal server error!");
     }
 });
 
-app.put("/book", (req,res) => {
-if (req.verified) {
-        insertRecord("booking_data", req.body, (error,result)=>{
+async function asyncForEach(array, callback) {
+    for (let index = 0; index < array.length; index++) {
+        await callback(array[index], index, array);
+    }
+}
+
+app.post("/book", async (req,res) => {
+    if (req.verified) {
+        req.body.status = status.unavailable;
+
+        let query = `SELECT * FROM driver_data WHERE isActive = true and noOfPassengers < ${5 - req.body.noOfSeats};`;
+        let drivers = await sqlQuery(query);
+        let from = [req.body.from_lat,req.body.from_lon];
+        let to = [req.body.to_lat, req.body.to_lon];
+
+        let minDistance = -1;
+        let driverEmail = null;
+
+        await asyncForEach(drivers, async (v,i,a) => {
+            let routePoints = [from];
+            let destinations = await sqlQuery(`SELECT to_lat, to_lon from booking_data where driverEmail = "${v.email}" and status = ${status.inProgress};`);
+            let distance = 0;
+            while (destinations.length > 0) {
+                let min = -1;
+                let index = 0;
+                destinations.forEach((v, i)=>{
+                    let d = abs(v.to_lat - routePoints[routePoints.length-1][0]) + abs(v.to_lon - routePoints[routePoints.length-1][1]);
+                    if (d < min || min == -1) {
+                        min = d;
+                        index = i;
+                    }
+                });
+                routePoints.push(destinations[index]);
+                destinations.splice(index, 1);
+            }
+
+            
+            distance += Math.abs(to[0] - routePoints[routePoints.length-1][0]) + Math.abs(to[1] - routePoints[routePoints.length-1][1]);
+
+            if (distance < minDistance || minDistance < 0) {
+                minDistance = distance;
+                driverEmail = v.email;
+            }
+        });
+
+        if (minDistance > 0) {
+            req.body.driverEmail = driverEmail;
+            req.body.status = status.booked;
+        }
+
+        req.body.userEmail = req.body.email;
+        delete req.body.email;
+
+        insertRecord("booking_data", req.body, (error, result) => {
             if (error) {
                 console.error(error);
-                res.status(500).send("Internal server error");
+                res.status(500).send();
             }
             else {
-                res.send({id: result.insertId});
+                res.send(req.body);
             }
         });
     }
@@ -257,10 +296,10 @@ app.post("/user", (req,res)=>{
 
 app.post("/verifyToken", (req,res)=>{
     if (req.verified) {
-        res.send(req.timeLeft);
+        res.send({timeLeft: req.timeLeft});
     }
     else {
-        res.send(false);
+        res.status(400).send({timeLeft: 0});
     }
 });
 
@@ -279,9 +318,6 @@ function findClosest(currentPosition, drivers) {
             ans = v;
             minDistance = temp;
         }
-
-        console.log(temp);
-        console.log(minDistance);
     });
 
     return ans;

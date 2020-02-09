@@ -7,5 +7,6 @@
     "isActive" : "BOOLEAN",
     "noOfPassengers" : "INTEGER",
     "position_lat" : "double",
-    "position_lon" : "double"
+    "position_lon" : "double",
+    "destinations" : "JSON"
 }
